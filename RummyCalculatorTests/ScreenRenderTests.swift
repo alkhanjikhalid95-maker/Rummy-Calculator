@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftUI
 import Testing
@@ -158,8 +159,21 @@ struct ScreenRenderTests {
         #expect(viewModel.isGameStarted)
         #expect(!viewModel.isGameOver)
         #expect(viewModel.currentRoundNumber == 5)
-        render(GameScreenView(viewModel: viewModel), named: "02-board")
+        let image = try! #require(render(GameScreenView(viewModel: viewModel), named: "02-board"))
         viewModel.stopTimer()
+
+        // Controls over the aura carry ink glyphs: the pause chevron, top left.
+        #expect(anyPixel(of: image, x: 0.05...0.15, y: 0.08...0.13, step: 0.004, where: isInk), "the pause button is white on white")
+        // The leader's name stands at the left of the chart in black.
+        #expect(anyPixel(of: image, x: 0.04...0.27, y: 0.26...0.46, step: 0.005, where: isInk), "no standings beside the chart")
+    }
+
+    @Test("The chart ranks names best first, level totals sharing a place")
+    func chartStandings() {
+        let standings = Standing.rank(totals: [400, 100, 400, -60], names: ["K", "H", "A", "S"], isRanked: true)
+        #expect(standings.map(\.name) == ["S", "H", "K", "A"])
+        #expect(standings.map(\.place) == [1, 2, 3, 3])
+        #expect(Standing.rank(totals: [0, 0], names: ["K", "H"], isRanked: false).map(\.place) == [nil, nil])
     }
 
     @Test("The winner picker renders its seat-selection step")
@@ -197,31 +211,71 @@ struct ScreenRenderTests {
         )
     }
 
-    @Test("The Joker reveal renders the card before the camera moves in")
-    func jokerReveal() {
-        let image = try! #require(render(JokerWinnerReveal(winnerName: "خالد") {}, named: "16-joker-reveal"))
-        // The card art sits in the middle; red and yellow in it show the image
-        // loaded from the asset catalogue rather than a blank white canvas.
-        var sawColour = false
-        for fy in stride(from: 0.3, through: 0.7, by: 0.05) {
-            for fx in stride(from: 0.3, through: 0.7, by: 0.05) {
-                if let (r, g, b) = colour(of: image, atX: fx, y: fy), max(r, g, b) - min(r, g, b) > 80 {
-                    sawColour = true
-                }
+    /// Whether any sampled pixel in the region passes `test`.
+    private func anyPixel(
+        of image: UIImage,
+        x: ClosedRange<CGFloat>,
+        y: ClosedRange<CGFloat>,
+        step: CGFloat = 0.01,
+        where test: ((Int, Int, Int)) -> Bool
+    ) -> Bool {
+        for fy in stride(from: y.lowerBound, through: y.upperBound, by: step) {
+            for fx in stride(from: x.lowerBound, through: x.upperBound, by: step) {
+                if let c = colour(of: image, atX: fx, y: fy), test(c) { return true }
             }
         }
-        #expect(sawColour, "the Joker card did not draw")
+        return false
     }
 
-    @Test("The Joker reveal ends on the winner's name inside the lens")
+    private func isMoonYellow(_ c: (Int, Int, Int)) -> Bool { c.0 > 200 && c.1 > 170 && c.2 < 90 }
+    private func isInk(_ c: (Int, Int, Int)) -> Bool { c.0 < 50 && c.1 < 50 && c.2 < 50 }
+
+    /// A region of the Joker card, as fractions of a 402 × 874 screen.
+    private func cardRegion(x: ClosedRange<CGFloat>, y: ClosedRange<CGFloat>) -> (x: ClosedRange<CGFloat>, y: ClosedRange<CGFloat>) {
+        let screen = CGSize(width: 402, height: 874)
+        let card = JokerWinnerReveal.cardFrame(in: screen)
+        func sx(_ f: CGFloat) -> CGFloat { (card.minX + f * card.width) / screen.width }
+        func sy(_ f: CGFloat) -> CGFloat { (card.minY + f * card.height) / screen.height }
+        return (sx(x.lowerBound)...sx(x.upperBound), sy(y.lowerBound)...sy(y.upperBound))
+    }
+
+    /// The middle of the sign's panel, where the name is set.
+    private var nameArea: (x: ClosedRange<CGFloat>, y: ClosedRange<CGFloat>) {
+        let panel = JokerWinnerReveal.signPanel
+        return cardRegion(
+            x: (panel.minX + panel.width * 0.25)...(panel.maxX - panel.width * 0.25),
+            y: (panel.minY + panel.height * 0.35)...(panel.maxY - panel.height * 0.1)
+        )
+    }
+
+    @Test("The Joker reveal opens on the card, binoculars in hand and no name yet")
+    func jokerRevealOpens() {
+        let image = try! #require(render(JokerWinnerReveal(winnerName: "خالد", playing: false) {}, named: "16-joker-reveal"))
+        #expect(anyPixel(of: image, x: 0.3...0.7, y: 0.3...0.75, where: isMoonYellow), "the card did not draw")
+        let binoculars = cardRegion(x: 0.24...0.40, y: 0.40...0.50)
+        #expect(anyPixel(of: image, x: binoculars.x, y: binoculars.y, step: 0.004, where: isInk), "no binoculars")
+        #expect(!anyPixel(of: image, x: nameArea.x, y: nameArea.y, step: 0.004, where: isInk), "a name before the sign is up")
+    }
+
+    @Test("The Joker reveal ends on the sign with the winner's name set on it")
     func jokerRevealFinalFrame() {
         let image = try! #require(render(
-            JokerWinnerReveal(winnerName: "خالد", startTime: 4.6) {},
+            JokerWinnerReveal(winnerName: "خالد", startTime: JokerWinnerReveal.nameTime) {},
             named: "17-joker-reveal-final"
         ))
-        // Inside the lens the screen is deep green-black, not the white card.
-        let (r, g, b) = try! #require(colour(of: image, atX: 0.12, y: 0.3))
-        #expect(r < 90 && g < 90 && b < 90, "not inside the lens — got (\(r), \(g), \(b))")
+        #expect(anyPixel(of: image, x: 0.3...0.7, y: 0.3...0.75, where: isMoonYellow))
+        // The sign in the clip is blank: ink on its panel is the overlaid name.
+        #expect(anyPixel(of: image, x: nameArea.x, y: nameArea.y, step: 0.003, where: isInk), "the name is not on the sign")
+    }
+
+    @Test("The Joker clip ships with the app, long enough for the name to land")
+    func jokerClipShips() async throws {
+        let url = try #require(Bundle.main.url(forResource: "JokerReveal", withExtension: "mp4"))
+        let duration = try await AVURLAsset(url: url).load(.duration).seconds
+        #expect(abs(duration - 3.79) < 0.1, "unexpected clip length \(duration)")
+        #expect(duration > JokerWinnerReveal.nameTime + 0.3)
+        let bytes = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int ?? 0
+        #expect(bytes < 3_000_000, "the clip has grown to \(bytes) bytes")
     }
 
     @Test("A board that is already finished raises the celebration on appear")
@@ -233,11 +287,9 @@ struct ScreenRenderTests {
         let image = try! #require(render(GameScreenView(viewModel: viewModel), named: "06-board-finished"))
         viewModel.stopTimer()
 
-        // The finish opens on the Joker reveal, drawn on white. Beside the card
-        // at mid-height is pure white when it is up; without it this point is
-        // the board's mauve-and-sage gradient.
-        let (r, g, b) = try! #require(colour(of: image, atX: 0.04, y: 0.5))
-        #expect(r > 245 && g > 245 && b > 245, "no Joker reveal — got (\(r), \(g), \(b))")
+        // The finish opens on the Joker reveal. Its moon is the only strong
+        // yellow anywhere in the app, so finding it means the overlay is up.
+        #expect(anyPixel(of: image, x: 0.3...0.7, y: 0.3...0.75, where: isMoonYellow), "no Joker reveal")
     }
 
     @Test("The predictions sheet renders once enough rounds are played")
@@ -308,6 +360,40 @@ struct ScreenRenderTests {
         viewModel.openManualEntry(roundIndex: 0, playerIndex: 1)
         render(ManualEntryView(viewModel: viewModel), named: "13-manual-entry")
         viewModel.stopTimer()
+    }
+
+    /// Ten games among seven friends, newest first.
+    private var clubGames: [GameRecord] {
+        [
+            standingsRecord(["Khalid", "Hamad", "Ali", "Saud"], [-120, 660, 1_440, 1_180], roundWinners: ["Khalid", "Khalid", "Hamad"], daysAgo: 0),
+            standingsRecord(["Khalid", "Hamad", "Ali", "Saud"], [900, 300, 1_200, 1_500], roundWinners: ["Hamad", "Hamad"], daysAgo: 1),
+            standingsRecord(["Fahad", "Hamad", "Ali", "Khalid"], [1_100, 800, 400, 200], roundWinners: ["Khalid", "Ali"], daysAgo: 3),
+            standingsRecord(["Khalid", "Hamad", "Nasser", "Saud"], [500, 520, 1_600, 260], roundWinners: ["Saud"], daysAgo: 4),
+            standingsRecord(["Khalid", "Fahad", "Ali", "Nasser"], [140, 900, 980, 1_220], roundWinners: ["Khalid", "Fahad"], daysAgo: 6),
+            standingsRecord(["Khalid", "Hamad", "Ali", "Saud"], [300, 300, 900, 1_000], daysAgo: 8),
+            standingsRecord(["Hamad", "Ali", "Saud", "Yousef"], [100, 700, 860, 1_300], roundWinners: ["Hamad"], daysAgo: 9),
+            standingsRecord(["Khalid", "Hamad", "Ali", "Saud"], [1_400, 200, 600, 900], daysAgo: 11),
+            standingsRecord(["Khalid", "Nasser", "Ali", "Saud"], [60, 800, 640, 1_000], daysAgo: 12),
+            standingsRecord(["Khalid", "Hamad", "Fahad", "Saud"], [700, 940, 220, 1_000], daysAgo: 14),
+        ]
+    }
+
+    @Test("The standings render a podium and the leaderboard")
+    func standingsLeaderboard() {
+        let image = try! #require(render(StandingsView(games: clubGames), named: "19-standings"))
+        // The leader's raised disc on the podium is ink.
+        #expect(anyPixel(of: image, x: 0.35...0.65, y: 0.15...0.4, step: 0.005, where: isInk), "no leader on the podium")
+    }
+
+    @Test("The standings compare two chosen players head to head")
+    func standingsHeadToHead() {
+        render(StandingsView(games: clubGames, tab: .headToHead, first: "Khalid", second: "hamad"), named: "20-standings-h2h")
+        render(StandingsView(games: clubGames, tab: .headToHead, first: "Nasser", second: "Yousef"), named: "21-standings-never-met")
+    }
+
+    @Test("The standings render their empty state")
+    func standingsEmpty() {
+        render(StandingsView(games: []), named: "22-standings-empty")
     }
 
     @Test("A finished game's details render")

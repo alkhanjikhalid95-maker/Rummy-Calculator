@@ -94,6 +94,7 @@ The simulator has no Bluetooth, so everything below has only been compiled and u
   - the game screen mid-game, with the chart;
   - the winner picker;
   - the celebration;
+  - the standings (الترتيب العام), on the leaderboard or a head-to-head;
   - a lock-screen Live Activity.
 
 ### Notes for App Review

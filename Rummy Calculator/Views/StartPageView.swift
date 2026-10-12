@@ -3,6 +3,7 @@ import SwiftUI
 struct StartPageView: View {
     @Bindable var viewModel: GameViewModel
     @State private var showHistory = false
+    @State private var showStandings = false
     @State private var showNameEditor = false
     @State private var showRules = false
     @State private var showJoin = false
@@ -75,6 +76,9 @@ struct StartPageView: View {
         .sheet(isPresented: $showHistory) {
             HistoryView(viewModel: viewModel)
         }
+        .sheet(isPresented: $showStandings) {
+            StandingsView(games: viewModel.historyManager.games)
+        }
         .sheet(isPresented: $showNameEditor) {
             NameEditorView(presetNames: viewModel.presetNames)
         }
@@ -105,8 +109,13 @@ struct StartPageView: View {
                     .font(.system(size: 22, weight: .regular))
                     .foregroundStyle(Color.ink)
                 Spacer()
-                IconPill(systemName: "clock.arrow.circlepath", label: "سجل الألعاب", size: 42) {
-                    showHistory = true
+                HStack(spacing: 10) {
+                    IconPill(systemName: "trophy", label: "الترتيب العام", size: 42) {
+                        showStandings = true
+                    }
+                    IconPill(systemName: "clock.arrow.circlepath", label: "سجل الألعاب", size: 42) {
+                        showHistory = true
+                    }
                 }
             }
         }

@@ -79,6 +79,22 @@ extension View {
         }
     }
 
+    /// Milky glass for controls over the aura: bright enough that ink glyphs
+    /// read on it, and that it still stands out where it floats over a
+    /// white card.
+    @ViewBuilder
+    func frosted<S: Shape>(in shape: S, interactive: Bool = false) -> some View {
+        let milky = self
+            .background(Color.white.opacity(0.68), in: shape)
+            .overlay(shape.stroke(Color.white, lineWidth: 0.75))
+            .shadow(color: .black.opacity(0.1), radius: 10, y: 4)
+        if #available(iOS 26.0, *) {
+            milky.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+        } else {
+            milky.background(.ultraThinMaterial, in: shape)
+        }
+    }
+
     /// White card with a soft, wide shadow.
     func card(radius: CGFloat = 30, highlighted: Bool = false) -> some View {
         self
@@ -172,8 +188,9 @@ struct PressableStyle: ButtonStyle {
 
 // MARK: - Small pieces
 
-/// Round icon button. `onAura` puts it in glass over the gradient; otherwise
-/// it is a white disc with a soft shadow, like the canvas buttons.
+/// Round icon button. `onAura` puts it in milky glass over the gradient;
+/// otherwise it is a white disc with a soft shadow, like the canvas buttons.
+/// The glyph is ink either way — white glyphs vanish on the pale aura.
 struct IconPill: View {
     let systemName: String
     let label: LocalizedStringKey
@@ -210,8 +227,8 @@ struct GlassCircle: View {
                 .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
         } else if onAura {
             icon
-                .foregroundStyle(.white)
-                .glass(in: Circle(), interactive: true)
+                .foregroundStyle(Color.ink)
+                .frosted(in: Circle(), interactive: true)
         } else {
             icon
                 .foregroundStyle(Color.ink)
@@ -291,7 +308,7 @@ struct InkChip: View {
     }
 }
 
-/// Glass capsule with a label, for values shown over the aura.
+/// Milky glass capsule with an ink label, for values shown over the aura.
 struct GlassTag: View {
     let text: String
     var systemImage: String?
@@ -308,10 +325,10 @@ struct GlassTag: View {
                 .lineLimit(1)
                 .contentTransition(.interpolate)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(Color.ink)
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
-        .glass(in: Capsule())
+        .frosted(in: Capsule())
     }
 }
 

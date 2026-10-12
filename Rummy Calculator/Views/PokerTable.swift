@@ -100,8 +100,8 @@ private struct TableTrack: View {
 
 // MARK: - Seat bubble
 
-/// A player's seat: a disc with their initial. Glass on the aura, white on a
-/// card, black when it is the active seat.
+/// A player's seat: a disc with their initial. Milky glass on the aura, white
+/// on a card, black when it is the active seat.
 ///
 /// Bump `popTrigger` to play the "bubble up" — an overshooting scale with a
 /// ripple — and set `isRaised` to keep it lifted while that seat is active.
@@ -132,8 +132,7 @@ struct SeatBubble: View {
     }
 
     private var foreground: Color {
-        if isRaised { return .white }
-        return style == .aura ? .white : .ink
+        isRaised ? .white : .ink
     }
 
     var body: some View {
@@ -196,9 +195,9 @@ struct SeatBubble: View {
                 .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
         } else if style == .aura {
             Circle()
-                .fill(Color.white.opacity(0.14))
+                .fill(Color.clear)
                 .frame(width: size, height: size)
-                .glass(in: Circle())
+                .frosted(in: Circle())
         } else {
             Circle()
                 .fill(Color.white)

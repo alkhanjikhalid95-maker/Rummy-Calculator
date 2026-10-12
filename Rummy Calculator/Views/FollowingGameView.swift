@@ -155,10 +155,10 @@ struct FollowingGameView: View {
                                 .monospacedDigit()
                         }
                         .font(.system(size: 15))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.ink)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 9)
-                        .glass(in: Capsule())
+                        .frosted(in: Capsule())
                     } else {
                         GlassTag(text: formatDuration(snapshot.elapsed), systemImage: "clock")
                     }

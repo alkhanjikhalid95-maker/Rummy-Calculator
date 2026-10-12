@@ -1,29 +1,48 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
-/// The Joker card's reveal: the camera dives into the nearer binocular lens
-/// and the winner's name resolves inside the glass, 4.6 seconds in all.
+/// The Joker announces the winner: he lowers his binoculars, throws them off
+/// the card and raises a blank sign — a clip made with Kling from the card art
+/// (see `Tools/JokerReveal`). The winner's name is live text set onto the sign
+/// once it is still, so any name works.
 ///
-/// Adapted from the JokerWinnerAnimation kit: the same timing and optics,
-/// with Arabic copy for the end of a game. Give each showing a fresh identity
-/// so it replays; uses the `JokerCard` image set.
+/// Plays on the app's aura so it hands over to the celebration without a
+/// change of light. Under Reduce Motion, or if the clip cannot play, it opens
+/// on the finished frame with the name already up.
 struct JokerWinnerReveal: View {
     let winnerName: String
-    let imageName: String
-    /// Where playback begins — 0 in the app; previews and tests can open on
-    /// the finished frame.
+    /// Where playback begins — 0 in the app. At or past `nameTime` it opens
+    /// on the finished frame.
     let startTime: TimeInterval
+    /// False holds the opening frame, for previews and tests.
+    let playing: Bool
     let onContinue: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 68
-    @State private var startedAt: Date?
-    @State private var accumulated: TimeInterval = 0
+    @State private var clip = RevealClip()
+    @State private var nameShown = false
+    /// The clip is over: its last frame is held as a still.
     @State private var finished = false
+    /// Continue is showing.
+    @State private var controlsShown = false
+    @State private var burst = 0
     @State private var announced = false
 
-    private let duration: TimeInterval = 4.6
+    /// The binoculars leave his hands.
+    static let throwTime: TimeInterval = 0.95
+    /// The sign has stopped moving; the name goes up.
+    static let nameTime: TimeInterval = 3.25
+
+    /// The sign's cream panel inside its red border, as fractions of the clip
+    /// frame. Measured on the clip's last frame; the sign holds this position
+    /// from `nameTime` to the end.
+    static let signPanel = CGRect(x: 0.2870, y: 0.0732, width: 0.4611, height: 0.1249)
+
+    /// Width ÷ height of the clip — the card's own proportions.
+    static let aspectRatio: CGFloat = 1080 / 1570
+
     private var displayName: String {
         let trimmed = winnerName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "الفائز" : trimmed
@@ -33,229 +52,384 @@ struct JokerWinnerReveal: View {
         "\(displayName)، الفائز باللعبة. لعب رائع."
     }
 
-    init(winnerName: String, imageName: String = "JokerCard", startTime: TimeInterval = 0, onContinue: @escaping () -> Void) {
+    /// Whether to skip straight to the finished frame.
+    private var opensFinished: Bool {
+        reduceMotion || startTime >= Self.nameTime
+    }
+
+    init(winnerName: String, startTime: TimeInterval = 0, playing: Bool = true, onContinue: @escaping () -> Void) {
         self.winnerName = winnerName
-        self.imageName = imageName
         self.startTime = startTime
+        self.playing = playing
         self.onContinue = onContinue
+    }
+
+    /// The card's frame on the full screen, safe areas included.
+    static func cardFrame(in size: CGSize) -> CGRect {
+        let width = min(size.width * 0.86, size.height * 0.6 * aspectRatio)
+        let height = width / aspectRatio
+        return CGRect(x: (size.width - width) / 2, y: size.height * 0.47 - height / 2, width: width, height: height)
     }
 
     var body: some View {
         GeometryReader { geometry in
-            TimelineView(.animation(minimumInterval: 1.0 / 60, paused: finished || scenePhase != .active)) { timeline in
-                let elapsed = min(duration, accumulated + (startedAt.map { max(0, timeline.date.timeIntervalSince($0)) } ?? 0))
-                let time = reduceMotion ? duration : elapsed
-                let reveal = JokerOptics.smooth((time - 3.3) / 0.8)
-                ZStack {
-                    Canvas(opaque: true) { context, size in
-                        JokerOptics.draw(context: context, size: size, time: time, image: Image(imageName))
-                    }
-                    .accessibilityHidden(true)
+            let card = Self.cardFrame(in: geometry.size)
 
-                    // Arabic is never letter-spaced: tracking pulls the letters apart.
-                    VStack {
-                        Text("انتهت اللعبة")
-                            .font(.system(size: 14, weight: .medium))
-                            .padding(.top, max(48, geometry.size.height * 0.135))
-                        Spacer()
-                        Text("لمسة سحر… وفوز مستحق")
-                            .font(.system(size: 14))
-                            .padding(.bottom, max(90, geometry.size.height * 0.18))
-                    }
-                    .foregroundStyle(Color(hex: 0x737B70))
-                    .opacity(1 - JokerOptics.smooth((time - 0.5) / 0.55))
-                    .accessibilityHidden(true)
+            ZStack {
+                AuraGradient(animated: !reduceMotion)
 
-                    winnerContent(reveal: reveal, availableHeight: geometry.size.height)
-                        .padding(.horizontal, 28)
-                        .frame(maxWidth: 620)
-                        .opacity(reveal)
-                        .blur(radius: (1 - reveal) * 6)
-                        .offset(y: (1 - reveal) * 17)
-                        .accessibilityHidden(reveal < 1)
+                cardView(size: card.size)
+                    .position(x: card.midX, y: card.midY)
 
-                    VStack {
-                        Spacer()
-                        Button(action: onContinue) {
-                            Text("متابعة")
-                                .font(.system(size: 16, weight: .medium))
-                                .frame(maxWidth: .infinity, minHeight: 52)
-                                .foregroundStyle(Color(hex: 0xEFDFB9))
-                                .background(Color(hex: 0xB7A06D).opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
-                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0xC2A970).opacity(0.3), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 36)
-                        .padding(.bottom, max(30, geometry.safeAreaInsets.bottom + 22))
-                        .frame(maxWidth: 560)
-                    }
-                    .opacity(JokerOptics.smooth((time - 4.1) / 0.4))
-                    .allowsHitTesting(time >= 4.5)
-                    .accessibilityHidden(time < 4.5)
+                VStack(spacing: 0) {
+                    Text("انتهت اللعبة")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.top, geometry.safeAreaInsets.top + 12)
+                    Spacer()
+                    Button("متابعة", action: onContinue)
+                        .buttonStyle(InkButtonStyle())
+                        .frame(maxWidth: 420)
+                        .padding(.horizontal, 32)
+                        .padding(.bottom, geometry.safeAreaInsets.bottom + 12)
+                        .opacity(controlsShown ? 1 : 0)
+                        .offset(y: controlsShown ? 0 : 16)
+                        .allowsHitTesting(controlsShown)
+                        .accessibilityHidden(!controlsShown)
                 }
-                .onChange(of: time >= 4.1) { _, ready in
-                    guard ready, !announced else { return }
-                    announced = true
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    UIAccessibility.post(notification: .announcement, argument: announcement)
-                }
-                .onChange(of: elapsed >= duration) { _, complete in
-                    if complete { accumulated = duration; startedAt = nil; finished = true }
-                }
+
+                // The winner, for VoiceOver — the sign itself is part of the picture.
+                Color.clear
+                    .accessibilityElement()
+                    .accessibilityLabel(Text(announcement))
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityHidden(!nameShown)
             }
         }
-        .background(.white)
+        // The card centres on the whole screen, the same on every iPhone;
+        // only the caption and button keep clear of the notch and home bar.
         .ignoresSafeArea()
         .statusBarHidden()
-        .onAppear { reset() }
-        .onDisappear { pause() }
-        .onChange(of: winnerName) { _, _ in reset() }
+        .sensoryFeedback(.success, trigger: nameShown) { _, shown in shown && !opensFinished }
+        .onAppear(perform: begin)
+        .onDisappear { clip.stop() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, !finished { startedAt = Date() }
-            else { pause() }
+            if phase == .active { clip.resume() } else { clip.pause() }
         }
         .onChange(of: reduceMotion) { _, reduced in
-            if reduced { accumulated = duration; startedAt = nil; finished = true; announceReducedMotion() }
+            if reduced { finish(animated: false) }
         }
     }
 
-    private func winnerContent(reveal: Double, availableHeight: CGFloat) -> some View {
-        VStack(spacing: availableHeight < 500 ? 10 : 24) {
-            Text("الجوكر قال كلمته")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color(hex: 0xC8BC99))
-            Text("♦")
-                .font(.system(size: 28, weight: .regular, design: .serif))
-                .foregroundStyle(Color(hex: 0xE0C78B))
-                .accessibilityHidden(true)
-            Text(displayName)
-                .font(.system(size: min(nameSize, availableHeight < 500 ? 48 : nameSize), weight: .regular, design: .serif))
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-                .minimumScaleFactor(0.25)
-                .foregroundStyle(LinearGradient(colors: [Color(hex: 0xFFF5D7), Color(hex: 0xD3B571)], startPoint: .top, endPoint: .bottom))
-                .frame(maxWidth: .infinity, minHeight: availableHeight < 500 ? 50 : 82)
-            Rectangle().fill(Color(hex: 0xCDBD88).opacity(0.3)).frame(width: 46, height: 1)
-                .accessibilityHidden(true)
-            Text("الفائز باللعبة")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color(hex: 0xE0D1AB))
-            if availableHeight >= 500 {
-                Text("لعب رائع")
-                    .font(.system(size: 15)).foregroundStyle(Color(hex: 0xA9B9AA))
+    // MARK: - Card
+
+    private func cardView(size: CGSize) -> some View {
+        let shape = RoundedRectangle(cornerRadius: size.width * 0.05, style: .continuous)
+        return ZStack {
+            // Underneath the clip: its first frame while it loads, its last
+            // once it has played — never an empty card.
+            Image(finished ? "JokerRevealEnd" : "JokerRevealStart")
+                .resizable()
+                .scaledToFill()
+
+            if clip.isPlaying || clip.hasStarted, !finished {
+                RevealPlayerView(player: clip.player)
             }
+
+            signText(size: size)
+            SignConfetti(trigger: burst, panel: panelFrame(in: size))
         }
-        .padding(.bottom, availableHeight < 500 ? 44 : 0)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(announcement)
-        .accessibilityAddTraits(.isHeader)
+        .frame(width: size.width, height: size.height)
+        .clipShape(shape)
+        .background(shape.fill(.white).shadow(color: .black.opacity(0.22), radius: 24, y: 14))
+        .accessibilityHidden(true)
     }
 
-    private func reset() {
-        let skip = reduceMotion || startTime >= duration
-        accumulated = skip ? duration : max(0, startTime)
-        finished = skip
-        announced = false
-        startedAt = skip || scenePhase != .active ? nil : Date()
-        if skip { announceReducedMotion() }
+    private func panelFrame(in size: CGSize) -> CGRect {
+        CGRect(
+            x: Self.signPanel.minX * size.width,
+            y: Self.signPanel.minY * size.height,
+            width: Self.signPanel.width * size.width,
+            height: Self.signPanel.height * size.height
+        )
     }
 
-    private func pause() {
-        if let startedAt { accumulated = min(duration, accumulated + max(0, Date().timeIntervalSince(startedAt))) }
-        startedAt = nil
+    /// "الفائز" and the name, set on the sign's panel.
+    private func signText(size: CGSize) -> some View {
+        let panel = panelFrame(in: size)
+        return VStack(spacing: panel.height * 0.02) {
+            Text("الفائز")
+                .font(.system(size: panel.height * 0.2, weight: .semibold))
+                .foregroundStyle(Color(red: 0.78, green: 0.13, blue: 0.15))
+            Text(displayName)
+                .font(.system(size: panel.height * 0.5, weight: .heavy, design: .serif))
+                .foregroundStyle(Color.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.3)
+        }
+        .padding(.horizontal, panel.width * 0.07)
+        .frame(width: panel.width, height: panel.height)
+        .scaleEffect(nameShown ? 1 : 0.55)
+        .opacity(nameShown ? 1 : 0)
+        .position(x: panel.midX, y: panel.midY)
     }
 
-    private func announceReducedMotion() {
+    // MARK: - Playback
+
+    private func begin() {
+        guard !opensFinished else {
+            finish(animated: false)
+            return
+        }
+        guard playing else { return }
+        clip.onThrow = {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
+        clip.onName = { showName() }
+        clip.onEnd = { finish(animated: true) }
+        // A clip that cannot play must never hold up the winner.
+        clip.onFailure = { finish(animated: false) }
+        clip.play(from: startTime, throwTime: Self.throwTime, nameTime: Self.nameTime)
+    }
+
+    private func showName() {
+        guard !nameShown else { return }
+        if reduceMotion {
+            nameShown = true
+        } else {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.58)) { nameShown = true }
+            burst += 1
+        }
+        announce()
+    }
+
+    private func finish(animated: Bool) {
+        if !nameShown {
+            nameShown = true
+            announce()
+        }
+        // Swap the playing clip for its identical last frame with no
+        // animation — a cross-fade would ghost the first frame through it.
+        finished = true
+        clip.stop()
+        if animated {
+            withAnimation(.easeOut(duration: 0.35)) { controlsShown = true }
+        } else {
+            controlsShown = true
+        }
+    }
+
+    private func announce() {
         guard !announced else { return }
         announced = true
         UIAccessibility.post(notification: .announcement, argument: announcement)
     }
 }
 
-/// Camera path and lens drawing, in the coordinates of the 300 × 436 card art.
-private nonisolated enum JokerOptics {
-    static func clamp(_ x: Double) -> Double { max(0, min(1, x)) }
-    static func smooth(_ value: Double) -> Double { let x = clamp(value); return x * x * (3 - 2 * x) }
-    static func ease(_ value: Double) -> Double {
-        let x = clamp(value)
-        return x < 0.5 ? 4 * x * x * x : 1 - pow(-2 * x + 2, 3) / 2
-    }
+// MARK: - Clip
 
-    static func draw(context: GraphicsContext, size: CGSize, time: Double, image: Image) {
-        let width = size.width, height = size.height
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
-        let progress = ease((time - 0.65) / 2.7)
-        let pan = smooth((time - 0.65) / 1.6)
-        let cardWidth = min(width * 292 / 390, height * 0.58 * 300 / 436)
-        let baseScale = cardWidth / 300
-        // Cover every corner, including on iPad and in landscape.
-        let finalScale = max(82, hypot(width, height) * 0.65 / (7.55 * baseScale))
-        let zoom = CGFloat(exp(log(Double(finalScale)) * progress))
-        let startX = (width - cardWidth) / 2 + 103 * baseScale
-        let startY = (height - 436 * baseScale) / 2 + 201 * baseScale
-        let cameraX = startX + (width / 2 - startX) * pan
-        let cameraY = startY + (height * 0.48 - startY) * pan
-        var world = context
-        world.translateBy(x: cameraX, y: cameraY)
-        world.scaleBy(x: baseScale * zoom, y: baseScale * zoom)
-        world.translateBy(x: -103, y: -201)
-        // Transform a fixed-size Canvas, rather than allocate an enormous scaled bitmap.
-        world.draw(image, in: CGRect(x: 0, y: 0, width: 300, height: 436))
-        drawGlass(context: world, progress: progress)
+/// The bundled Joker clip and its cue points.
+@Observable
+final class RevealClip {
+    /// Made when playback starts — SwiftUI may build the view, and with it
+    /// this object, more often than it shows it.
+    private(set) var player: AVPlayer?
+    private(set) var isPlaying = false
+    private(set) var hasStarted = false
 
-        let reveal = smooth((time - 3.3) / 0.8)
-        guard reveal > 0 else { return }
-        var finish = context
-        finish.opacity = reveal
-        finish.fill(Path(CGRect(origin: .zero, size: size)), with: .radialGradient(
-            Gradient(colors: [.clear, Color(hex: 0x020B09).opacity(0.6)]),
-            center: CGPoint(x: width * 0.5, y: height * 0.48), startRadius: 35, endRadius: height * 0.65))
-        var rings = finish
-        rings.translateBy(x: width / 2, y: height * 0.46)
-        rings.rotate(by: .radians(-0.25))
-        rings.stroke(ellipse(x: 0, y: 0, rx: width * 0.664, ry: height * 0.423), with: .color(Color(hex: 0xD9C384).opacity(0.12)), lineWidth: 1)
-        rings.stroke(ellipse(x: 0, y: 0, rx: width * 0.633, ry: height * 0.405), with: .color(Color(hex: 0xE4CF92).opacity(0.12)), lineWidth: 0.5)
-        for i in 0..<16 {
-            let angle = Double(i) * 2.39996
-            let radius = Double(100 + (i % 4) * 35) * min(width / 390, height / 844)
-            let x = width / 2 + cos(angle) * radius
-            let y = height * 0.47 + sin(angle) * radius * 1.45 - (time - 3.3) * 8
-            let dotRadius = i % 3 == 0 ? 1.4 : 0.8
-            finish.fill(ellipse(x: x, y: y, rx: dotRadius, ry: dotRadius), with: .color(Color(hex: 0xE4D4A0).opacity(0.2 + 0.35 * pow(sin(Double(i) * 1.71), 2))))
+    @ObservationIgnored var onThrow: () -> Void = {}
+    @ObservationIgnored var onName: () -> Void = {}
+    @ObservationIgnored var onEnd: () -> Void = {}
+    @ObservationIgnored var onFailure: () -> Void = {}
+
+    @ObservationIgnored private var boundaryObserver: Any?
+    @ObservationIgnored private var endObserver: NSObjectProtocol?
+    @ObservationIgnored private var failObserver: NSObjectProtocol?
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
+    @ObservationIgnored private var ended = false
+
+    func play(from start: TimeInterval, throwTime: TimeInterval, nameTime: TimeInterval) {
+        guard let url = Bundle.main.url(forResource: "JokerReveal", withExtension: "mp4") else {
+            onFailure()
+            return
+        }
+        let item = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+        player.actionAtItemEnd = .pause
+        player.preventsDisplaySleepDuringVideoPlayback = false
+        self.player = player
+        stopObserving()
+        ended = false
+
+        let cues = [throwTime, nameTime]
+            .filter { $0 > start }
+            .map { NSValue(time: CMTime(seconds: $0, preferredTimescale: 600)) }
+        if !cues.isEmpty {
+            boundaryObserver = player.addBoundaryTimeObserver(forTimes: cues, queue: .main) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let now = player.currentTime().seconds
+                    if now >= nameTime - 0.05 { self.onName() } else { self.onThrow() }
+                }
+            }
+        }
+        if start >= throwTime { onThrow() }
+        endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reachEnd() }
+        }
+        failObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fail() }
+        }
+
+        player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        player.play()
+        isPlaying = true
+        hasStarted = true
+
+        // If the clip stalls — decoding trouble, a missing frame — finish anyway.
+        let deadline = nameTime - start + 2.5
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(deadline))
+            guard let self, !Task.isCancelled, !self.ended else { return }
+            if item.status == .failed || player.currentTime().seconds < nameTime {
+                self.fail()
+            }
         }
     }
 
-    private static func drawGlass(context: GraphicsContext, progress: Double) {
-        var lens = context
-        // Measured in the original 300 x 436 image: the nearer, lower binocular lens.
-        lens.translateBy(x: 103, y: 201)
-        lens.rotate(by: .radians(0.48))
-        lens.fill(ellipse(x: 0, y: 0, rx: 9.25, ry: 12), with: .linearGradient(
-            Gradient(stops: [.init(color: Color(hex: 0xEFEED2), location: 0), .init(color: Color(hex: 0x1D2523), location: 0.2), .init(color: Color(hex: 0x070C0B), location: 0.5), .init(color: Color(hex: 0xA58F52), location: 0.82), .init(color: Color(hex: 0x151C19), location: 1)]),
-            startPoint: CGPoint(x: -10, y: -12), endPoint: CGPoint(x: 10, y: 12)))
-        lens.clip(to: ellipse(x: 0, y: 0, rx: 7.55, ry: 10.2))
-        lens.fill(Path(CGRect(x: -10, y: -13, width: 20, height: 26)), with: .radialGradient(
-            Gradient(stops: [.init(color: Color(hex: 0x526459), location: 0), .init(color: Color(hex: 0x213832), location: 0.21), .init(color: Color(hex: 0x10251F), location: 0.52), .init(color: Color(hex: 0x071512), location: 0.83), .init(color: Color(hex: 0x050E0D), location: 1)]),
-            center: CGPoint(x: -3.8, y: -5.6), startRadius: 0.2, endRadius: 18))
-        var reflection = lens
-        reflection.rotate(by: .radians(-0.32))
-        reflection.fill(Path(CGRect(x: -15, y: -15, width: 30, height: 30)), with: .linearGradient(
-            Gradient(stops: [.init(color: .clear, location: 0), .init(color: Color(hex: 0xFFF9DF).opacity(0.4 - progress * 0.23), location: 0.35), .init(color: Color(hex: 0xF4EBBF).opacity(0.04), location: 0.47), .init(color: .clear, location: 0.6)]),
-            startPoint: CGPoint(x: -8, y: -10), endPoint: CGPoint(x: 5, y: 6)))
-        lens.stroke(ellipse(x: 0.7, y: 1, rx: 6.1, ry: 8.6), with: .color(Color(hex: 0xD3C180).opacity(0.16)), lineWidth: 0.16)
-        var glint = Path()
-        glint.addArc(center: .zero, radius: 1, startAngle: .radians(3.55), endAngle: .radians(4.8), clockwise: false, transform: CGAffineTransform(scaleX: 6.65, y: 9.3))
-        lens.stroke(glint, with: .color(Color(hex: 0xFFF8D0).opacity(0.53)), lineWidth: 0.3)
+    func pause() {
+        guard isPlaying else { return }
+        player?.pause()
     }
 
-    private static func ellipse(x: Double, y: Double, rx: Double, ry: Double) -> Path {
-        Path(ellipseIn: CGRect(x: x - rx, y: y - ry, width: 2 * rx, height: 2 * ry))
+    func resume() {
+        guard isPlaying, !ended else { return }
+        player?.play()
+    }
+
+    func stop() {
+        player?.pause()
+        isPlaying = false
+        stopObserving()
+    }
+
+    private func reachEnd() {
+        guard !ended else { return }
+        ended = true
+        // A clip shorter than expected still puts the name up.
+        onName()
+        onEnd()
+        stop()
+    }
+
+    private func fail() {
+        guard !ended else { return }
+        ended = true
+        stop()
+        onFailure()
+    }
+
+    private func stopObserving() {
+        if let boundaryObserver { player?.removeTimeObserver(boundaryObserver) }
+        boundaryObserver = nil
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        endObserver = nil
+        if let failObserver { NotificationCenter.default.removeObserver(failObserver) }
+        failObserver = nil
+        watchdog?.cancel()
+        watchdog = nil
     }
 }
 
-private extension Color {
-    nonisolated init(hex: UInt32) {
-        self.init(.sRGB, red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255, opacity: 1)
+/// An `AVPlayerLayer` filling its frame, with no controls.
+private struct RevealPlayerView: UIViewRepresentable {
+    let player: AVPlayer?
+
+    func makeUIView(context: Context) -> PlayerLayerView {
+        let view = PlayerLayerView()
+        view.playerLayer.videoGravity = .resizeAspectFill
+        view.playerLayer.player = player
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: PlayerLayerView, context: Context) {
+        view.playerLayer.player = player
+    }
+
+    final class PlayerLayerView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+}
+
+// MARK: - Confetti
+
+/// A small burst off the sign as the name lands, in the card's own red,
+/// yellow, black and white. Invisible at rest, so it does not matter which
+/// keyframe the animator settles on.
+private struct SignConfetti: View {
+    let trigger: Int
+    let panel: CGRect
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private nonisolated struct Piece {
+        let angle: Double
+        let speed: Double
+        let spin: Double
+        let size: Double
+        let colour: Color
+    }
+
+    private nonisolated static let pieces: [Piece] = {
+        var seed: UInt64 = 0x2545F4914F6CDD1D
+        func next() -> Double {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
+            return Double(seed % 10_000) / 10_000
+        }
+        let colours: [Color] = [
+            Color(red: 0.84, green: 0.13, blue: 0.13),
+            Color(red: 0.98, green: 0.86, blue: 0.08),
+            .white,
+            .ink,
+        ]
+        return (0..<30).map { _ in
+            Piece(
+                angle: -.pi * (0.05 + 0.9 * next()),
+                speed: 140 + 200 * next(),
+                spin: (next() - 0.5) * 1000,
+                size: 4 + 4 * next(),
+                colour: colours[Int(next() * 4) % 4]
+            )
+        }
+    }()
+
+    var body: some View {
+        Color.clear
+            .keyframeAnimator(initialValue: 0.0, trigger: reduceMotion ? 0 : trigger) { content, age in
+                content.overlay {
+                    Canvas { context, _ in
+                        guard age > 0, age < 1 else { return }
+                        let seconds = age * 1.1
+                        for piece in Self.pieces {
+                            let x = panel.midX + cos(piece.angle) * piece.speed * seconds
+                            let y = panel.midY + sin(piece.angle) * piece.speed * seconds + 0.5 * 520 * seconds * seconds
+                            var bit = context
+                            bit.opacity = 1 - max(0, (age - 0.65) / 0.35)
+                            bit.translateBy(x: x, y: y)
+                            bit.rotate(by: .degrees(piece.spin * seconds))
+                            let rect = CGRect(x: -piece.size / 2, y: -piece.size * 0.8, width: piece.size, height: piece.size * 1.6)
+                            bit.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(piece.colour))
+                        }
+                    }
+                }
+            } keyframes: { _ in
+                LinearKeyframe(0.001, duration: 0.001)
+                LinearKeyframe(1, duration: 1.1)
+            }
+            .allowsHitTesting(false)
     }
 }
 
@@ -263,6 +437,6 @@ private extension Color {
     JokerWinnerReveal(winnerName: "Khalid") {}
 }
 
-#Preview("Final frame") {
-    JokerWinnerReveal(winnerName: "خالد", startTime: 4.6) {}
+#Preview("Finished") {
+    JokerWinnerReveal(winnerName: "خالد", startTime: JokerWinnerReveal.nameTime) {}
 }

@@ -171,22 +171,14 @@ struct GameScreenView: View {
                 }
             }
 
-            ZStack(alignment: .topLeading) {
-                ScoreChart(
-                    series: viewModel.scoreSeries,
-                    names: viewModel.players.map(\.name),
-                    leader: leader,
-                    maxRounds: viewModel.game?.maxRounds ?? 9
-                )
-                .frame(height: 150)
-
-                if let leader {
-                    GlassTag(text: viewModel.players[leader].name, systemImage: "crown")
-                        .offset(y: 8)
-                        .transition(.scale.combined(with: .opacity))
-                        .id(leader)
-                }
-            }
+            ScoreChart(
+                series: viewModel.scoreSeries,
+                names: viewModel.players.map(\.name),
+                leader: leader,
+                maxRounds: viewModel.game?.maxRounds ?? 9,
+                showsStandings: true
+            )
+            .frame(height: 164)
         }
         .padding(.horizontal, 6)
     }
