@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>يستخدم التطبيق البلوتوث لمشاركة نتائج اللعبة مع اللاعبين على نفس الطاولة وعرضها على شاشة القفل في جوالاتهم. Bluetooth shares live scores with players at your table.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Light</string>
+</dict>
+</plist>
